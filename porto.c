@@ -166,6 +166,8 @@ scanner_init(struct scanner *s)
 	s->link_hdr_len = link_offset(s->p);
 	s->tv.tv_sec = 0;
 	s->tv.tv_usec = 500;
+	if (s->max_port == 0)
+		s->max_port = 65535;
 	addr_aton(s->ip_local, &s->src);
 	addr_aton(s->ip_target, &s->dst);
 	s->port_array = calloc(1, sizeof(int) * s->max_port);
