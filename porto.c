@@ -19,13 +19,13 @@ struct scanner {
 	char			*interface;
 	char			*ip_local;
 	char			*ip_target;
+	char			*port_array;
 	char			 strbpf[2048];
 	int			 fd;
 	int 			 link_hdr_len;
 	int			 max_port;
 	int			 seen_port;
 	int			 total;
-	int			*port_array;
 	ip_t			*ip_handle;
 	pcap_t			*p;
 	rand_t			*rnd;
