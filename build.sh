@@ -1,1 +1,1 @@
-gcc -Wall porto.c -L/usr/local/lib -levent -lpcap -o porto
+gcc -Wall porto.c -I/usr/local/include -L/usr/local/lib -ldnet -lpcap -levent -o porto
