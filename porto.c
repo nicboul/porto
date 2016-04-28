@@ -15,42 +15,47 @@
 #include <dnet.h>
 #include <pcap.h>
 
-char			*ip_local = NULL;
-char			*ip_target = NULL;
-char			*interface = NULL;
-int 			 link_hdr_len;
-int			 max_port = 65535;
-int			 seen_port = 0;
-int			 total = 0;
-int			*port_array;
-ip_t			*ip_handle;
-pcap_t			*p;
-rand_t			*rnd;
-struct addr		 src;
-struct addr		 dst;
-struct event		*read_ev;
-struct event		*probe_ev;
-struct event		*ev_int;
-struct event_base	*base;
-struct timeval		 tv;
+struct scanner {
+	char			*interface;
+	char			*ip_local;
+	char			*ip_target;
+	char			 strbpf[2048];
+	int			 fd;
+	int 			 link_hdr_len;
+	int			 max_port;
+	int			 seen_port;
+	int			 total;
+	int			*port_array;
+	ip_t			*ip_handle;
+	pcap_t			*p;
+	rand_t			*rnd;
+	time_t			 lastcall;
+	struct bpf_program	 bpf;
+	struct addr		 src;
+	struct addr		 dst;
+	struct event		*read_ev;
+	struct event		*probe_ev;
+	struct event_base	*base;
+	struct timeval		 tv;
+};
 
 static void
-scan(const u_char *frame)
+scan(struct scanner *s, const u_char *frame)
 {
 	struct ip_hdr	*ip_h;
 	struct tcp_hdr	*tcp_h;
 	const u_char	*packet;
 
-	packet = frame + link_hdr_len;
+	packet = frame + s->link_hdr_len;
 	ip_h = (struct ip_hdr *)packet;
 	if (ip_h->ip_v != 4)
 		return;
 
 	tcp_h = (struct tcp_hdr *)(packet + IP_HDR_LEN);
-	seen_port = ntohs(tcp_h->th_sport);
-	if (port_array[seen_port] == 0) {
-		port_array[seen_port] = 1;
-		fprintf(stdout, "%d \t open \n", seen_port);
+	s->seen_port = ntohs(tcp_h->th_sport);
+	if (s->port_array[s->seen_port] == 0) {
+		s->port_array[s->seen_port] = 1;
+		fprintf(stdout, "%d \t open \n", s->seen_port);
 	}
 }
 
@@ -58,30 +63,32 @@ scan(const u_char *frame)
 static void
 on_read(int fd, short event, void *arg)
 {
-	struct pcap_pkthdr	 ph;
 	const u_char		*frame;
-	static time_t		 lastcall = 0;
+	struct pcap_pkthdr	 ph;
+	struct scanner		*s = arg;
 
-	if ((frame = pcap_next(p, &ph)) != NULL)
-		scan(frame);
+	if ((frame = pcap_next(s->p, &ph)) != NULL)
+		scan(s, frame);
 
-	if (total >= max_port) {
-		if (lastcall == 0)
-			lastcall = time(NULL);
-		else if (seen_port >= max_port ||
-				time(NULL) - lastcall > MAXWAIT) {
+	if (s->total >= s->max_port) {
+		if (s->lastcall == 0)
+			s->lastcall = time(NULL);
+		else if (s->seen_port >= s->max_port ||
+				time(NULL) - s->lastcall > MAXWAIT) {
 			return;
 		}
 	}
 
-	event_add(read_ev, &tv);
+	event_add(s->read_ev, &s->tv);
 }
 
 static void
 on_probe(int fd, short event, void *arg)
 {
-	int	len;
-	int	sprint = 0;
+	int		 len;
+	int		 sprint = 0;
+	struct scanner	*s = arg;
+
 	struct {
 		union {
 			struct ip_hdr	ip;
@@ -93,22 +100,22 @@ on_probe(int fd, short event, void *arg)
 
 	len = IP_HDR_LEN + TCP_HDR_LEN;
 
-	while (sprint++ < 100 && total++ <= max_port) {
+	while (sprint++ < 100 && s->total++ <= s->max_port) {
 		ip_pack_hdr(&pkt.pkt_hdr_ip, IP_TOS_LOWDELAY, len,
-				rand_uint16(rnd), 0, 64, IP_PROTO_TCP,
-				src.addr_ip, dst.addr_ip);
+				rand_uint16(s->rnd), 0, 64, IP_PROTO_TCP,
+				s->src.addr_ip, s->dst.addr_ip);
 
-		tcp_pack_hdr(&pkt.pkt_hdr_tcp, rand_uint16(rnd), total,
-				rand_uint32(rnd), rand_uint32(rnd),
-				TH_SYN, rand_uint16(rnd), 0);
+		tcp_pack_hdr(&pkt.pkt_hdr_tcp, rand_uint16(s->rnd), s->total,
+				rand_uint32(s->rnd), rand_uint32(s->rnd),
+				TH_SYN, rand_uint16(s->rnd), 0);
 
 		ip_checksum(&pkt, len);
 
-		ip_send(ip_handle, &pkt, len);
+		ip_send(s->ip_handle, &pkt, len);
 	}
 
-	if (total <= max_port)
-		event_add(probe_ev, &tv);
+	if (s->total <= s->max_port)
+		event_add(s->probe_ev, &s->tv);
 
 	return;
 }
@@ -136,6 +143,56 @@ link_offset(pcap_t *p)
 }
 
 static void
+scanner_init(struct scanner *s)
+{
+	char	errbuf[PCAP_ERRBUF_SIZE];
+
+	if ((s->p = pcap_open_live(s->interface, 1500, 1, 500, errbuf)) == NULL)
+		err(1, "pcap_open_live");
+
+	snprintf(s->strbpf, sizeof(s->strbpf),
+		"tcp[tcpflags] == tcp-syn|tcp-ack and src %s and dst %s",
+		s->ip_target, s->ip_local);
+
+	if (pcap_compile(s->p, &s->bpf, s->strbpf, 1, PCAP_NETMASK_UNKNOWN) == -1)
+		err(1, "pcap_compile");
+
+	if (pcap_setfilter(s->p, &s->bpf) == -1)
+		err(1, "pcap_setfilter");
+
+	s->ip_handle = ip_open();
+	s->fd = pcap_fileno(s->p);
+	s->rnd = rand_open();
+	s->link_hdr_len = link_offset(s->p);
+	s->tv.tv_sec = 0;
+	s->tv.tv_usec = 500;
+	addr_aton(s->ip_local, &s->src);
+	addr_aton(s->ip_target, &s->dst);
+	s->port_array = calloc(1, sizeof(int) * s->max_port);
+
+	s->base = event_base_new();
+
+	s->read_ev = event_new(s->base, s->fd, EV_READ, on_read, s);
+	event_add(s->read_ev, &s->tv);
+
+	s->probe_ev = event_new(s->base, s->fd, EV_WRITE, on_probe, s);
+	event_add(s->probe_ev, &s->tv);
+}
+
+static void
+scanner_free(struct scanner *s)
+{
+	pcap_close(s->p);
+	ip_close(s->ip_handle);
+	rand_close(s->rnd);
+	event_base_free(s->base);
+	free(s->interface);
+	free(s->ip_local);
+	free(s->ip_target);
+	free(s->port_array);
+}
+
+static void
 usage()
 {
 	fprintf(stderr, "Options:\n"
@@ -149,28 +206,28 @@ usage()
 int
 main(int argc, char *argv[])
 {
-	char	errbuf[PCAP_ERRBUF_SIZE];
-	char	strbpf[2048];
-	int	fd, opt;
-	struct	bpf_program bpf;
+	int		opt;
+	struct scanner	s;
 
 
 	if (argc < 2)
 		usage();
 
+	memset(&s, 0, sizeof(s));
+
 	while ((opt = getopt(argc, argv, "s:d:i:p:")) != -1) {
 		switch (opt) {
 		case 's':
-			ip_local = strdup(optarg);
+			s.ip_local = strdup(optarg);
 			break;
 		case 'd':
-			ip_target = strdup(optarg);
+			s.ip_target = strdup(optarg);
 			break;
 		case 'i':
-			interface = strdup(optarg);
+			s.interface = strdup(optarg);
 			break;
 		case 'p':
-			max_port = atoi(optarg);
+			s.max_port = atoi(optarg);
 			break;
 		default:
 			usage();
@@ -180,54 +237,19 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (ip_local == NULL ||
-	    ip_target == NULL ||
-	    interface == NULL) {
+	if (s.ip_local == NULL ||
+	    s.ip_target == NULL ||
+	    s.interface == NULL) {
 		usage();
 	}
 
-	if ((p = pcap_open_live(interface, 1500, 1, 500, errbuf)) == NULL)
-		err(1, "pcap_open_live");
+	scanner_init(&s);
 
-	snprintf(strbpf, sizeof(strbpf),
-		"tcp[tcpflags] == tcp-syn|tcp-ack and src %s and dst %s",
-		ip_target, ip_local);
-
-	if (pcap_compile(p, &bpf, strbpf, 1, PCAP_NETMASK_UNKNOWN) == -1)
-		err(1, "pcap_compile");
-
-	if (pcap_setfilter(p, &bpf) == -1)
-		err(1, "pcap_setfilter");
-
-	ip_handle = ip_open();
-	fd = pcap_fileno(p);
-	rnd = rand_open();
-	link_hdr_len = link_offset(p);
-	tv.tv_sec = 0;
-	tv.tv_usec = 500;
-	addr_aton(ip_local, &src);
-	addr_aton(ip_target, &dst);
-	port_array = calloc(1, sizeof(int) * max_port);
-
-	base = event_base_new();
-
-	read_ev = event_new(base, fd, EV_READ, on_read, NULL);
-	event_add(read_ev, &tv);
-
-	probe_ev = event_new(base, fd, EV_WRITE, on_probe, NULL);
-	event_add(probe_ev, &tv);
-
-	printf("Scanning %s...\n", ip_target);
-	event_base_dispatch(base);
+	printf("Scanning %s...\n", s.ip_target);
+	event_base_dispatch(s.base);
 	printf("-- completed --\n");
 
-	pcap_close(p);
-	ip_close(ip_handle);
-	event_base_free(base);
-	free(interface);
-	free(ip_local);
-	free(ip_target);
-	free(port_array);
+	scanner_free(&s);
 
 	return(0);
 }
