@@ -12,7 +12,11 @@
 #include <unistd.h>
 
 #include <event2/event.h>
+#ifdef __FreeBSD__
 #include <dnet.h>
+#elif __linux__
+#include <dumbnet.h>
+#endif
 #include <pcap.h>
 
 struct scanner {
