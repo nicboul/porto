@@ -43,6 +43,9 @@ struct scanner {
 	struct timeval		 tv;
 };
 
+#define MAXWAIT 3
+#define MAXPORT 65535
+
 static void
 scan(struct scanner *s, const u_char *frame)
 {
@@ -63,7 +66,6 @@ scan(struct scanner *s, const u_char *frame)
 	}
 }
 
-#define MAXWAIT 3
 static void
 on_read(int fd, short event, void *arg)
 {
@@ -171,7 +173,7 @@ scanner_init(struct scanner *s)
 	s->tv.tv_sec = 0;
 	s->tv.tv_usec = 500;
 	if (s->max_port == 0)
-		s->max_port = 65535;
+		s->max_port = MAXPORT;
 	addr_aton(s->ip_local, &s->src);
 	addr_aton(s->ip_target, &s->dst);
 	s->port_array = calloc(1, sizeof(int) * s->max_port);
