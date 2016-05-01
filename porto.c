@@ -220,7 +220,12 @@ scan_test()
 
 	s.ip_local = strdup("127.0.0.1");
 	s.ip_target = strdup("127.0.0.1");
+
+#ifdef __FreeBSD__
+	s.interface = strdup("lo0");
+#elif __linux__
 	s.interface = strdup("lo");
+#endif
 
 	scanner_init(&s);
 	s.tv.tv_usec = 0;
