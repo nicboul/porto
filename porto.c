@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <event2/event.h>
+#include <event2/listener.h>
 #ifdef __FreeBSD__
 #include <dnet.h>
 #elif __linux__
@@ -207,20 +208,70 @@ scanner_free(struct scanner *s)
 }
 
 static void
+scan_test()
+{
+	struct evconnlistener   **listener_array;
+	int		 	 i, port, error = 0;
+	struct scanner	 	 s;
+	struct sockaddr_in       sin;
+
+	memset(&s, 0, sizeof(s));
+	listener_array = calloc(1, sizeof(struct evconnlistener *) * MAXPORT);
+
+	s.ip_local = strdup("127.0.0.1");
+	s.ip_target = strdup("127.0.0.1");
+	s.interface = strdup("lo");
+
+	scanner_init(&s);
+	s.tv.tv_usec = 0;
+
+	for (i = 1; i < 100; i++) {
+
+		port = rand_uint16(s.rnd);
+
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_addr.s_addr = htonl(0);
+		sin.sin_port = htons(port);
+
+		listener_array[port] = evconnlistener_new_bind(s.base, NULL, NULL,
+		LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
+		(struct sockaddr*)&sin, sizeof(sin));
+	}
+
+	printf("Test Scanning...\n");
+	event_base_dispatch(s.base);
+	printf("-- completed --\n");
+
+	for (i = 0; i < s.max_port; i++) {
+		if (listener_array[i] != NULL) {
+			evconnlistener_free(listener_array[i]);
+			if (s.port_array[i] == 0)
+				error++;
+		}
+	}
+
+	scanner_free(&s);
+
+	printf("%d error(s) found\n", error);
+}
+
+static void
 usage()
 {
 	fprintf(stderr, "Options:\n"
 		"  -i <interface>\n"
 		"  -s <local ip>\n"
 		"  -d <target ip>\n"
-		"  -p [max port number] Default 65535\n");
+		"  -p [max port number] Default 65535\n"
+		"  -t perform test scanner");
 	exit(0);
 }
 
 int
 main(int argc, char *argv[])
 {
-	int		opt;
+	int		test, opt;
 	struct scanner	s;
 
 
@@ -229,7 +280,7 @@ main(int argc, char *argv[])
 
 	memset(&s, 0, sizeof(s));
 
-	while ((opt = getopt(argc, argv, "s:d:i:p:")) != -1) {
+	while ((opt = getopt(argc, argv, "s:d:i:p:t")) != -1) {
 		switch (opt) {
 		case 's':
 			s.ip_local = strdup(optarg);
@@ -243,6 +294,9 @@ main(int argc, char *argv[])
 		case 'p':
 			s.max_port = atoi(optarg);
 			break;
+		case 't':
+			test = 1;
+			break;
 		default:
 			usage();
 			break;
@@ -250,6 +304,11 @@ main(int argc, char *argv[])
 	}
 	argc -= optind;
 	argv += optind;
+
+	if (test == 1) {
+		scan_test();
+		return 0;
+	}
 
 	if (s.ip_local == NULL ||
 	    s.ip_target == NULL ||
