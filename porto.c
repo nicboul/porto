@@ -176,7 +176,7 @@ scanner_init(struct scanner *s)
 		s->max_port = MAXPORT;
 	addr_aton(s->ip_local, &s->src);
 	addr_aton(s->ip_target, &s->dst);
-	s->port_array = calloc(1, sizeof(int) * s->max_port);
+	s->port_array = calloc(1, sizeof(char) * s->max_port);
 
 	s->base = event_base_new();
 
