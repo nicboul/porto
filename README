@@ -1,0 +1,53 @@
+
+Porto is a simple TCP port scanner written in C.
+
+For every port, it does send a raw TCP/IP packet with the SYN flag set.
+At the same time, it does listen for packets with the SYN and ACK flags set.
+
+As explained in RFC 793 <https://www.ietf.org/rfc/rfc793.txt>, upon reception
+of a SYN segment, if a tcp port is "listening", a SYN and an ACKnowledgement for
+the SYN received are sent.
+
+Porto doesn't try to complete the handshake by sending a final ACK. Consequently,
+the other side doesn't get to the ESTABLISHED state and hence no connection is
+actually happening. This technique is called stealth scanning.
+
+
+
+Debian INSTALL
+--------------
+Install the dependencies:
+	sudo apt-get install libdumbnet-dev libevent-dev libpcap-dev
+
+Build Porto:
+	./build_linux.sh
+
+
+FreeBSD INSTALL
+---------------
+Install the dependencies:
+	sudo pkg install libdnet libpcap libevent2
+
+Build Porto:
+	./build_freebsd.sh
+
+
+TUTORIAL
+--------
+Run the tests:
+	sudo ./porto -t
+
+Scan itself (Linux):
+	sudo ./porto -i lo -s 127.0.0.1 -d 127.0.0.1
+
+Scan itself (FreeBSD):
+	sudo ./porto -i lo0 -s 127.0.0.1 -d 127.0.0.1
+
+Scan target:
+	sudo ./porto -i wlan0 -s 192.168.1.2 -d 8.8.8.8
+
+Example:
+	$ sudo ./porto -i wlan0 -s 192.168.2.103 -d 8.8.8.8 -p 1000
+	Scanning 8.8.8.8...
+	53 	 open 
+	-- completed --
