@@ -190,10 +190,16 @@ scanner_init(struct scanner *s)
 static void
 scanner_free(struct scanner *s)
 {
+	event_free(s->read_ev);
+	event_free(s->probe_ev);
+	event_base_free(s->base);
+
+	pcap_freecode(&s->bpf);
 	pcap_close(s->p);
+
 	ip_close(s->ip_handle);
 	rand_close(s->rnd);
-	event_base_free(s->base);
+
 	free(s->interface);
 	free(s->ip_local);
 	free(s->ip_target);
