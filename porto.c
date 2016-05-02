@@ -269,7 +269,7 @@ usage()
 		"  -s <local ip>\n"
 		"  -d <target ip>\n"
 		"  -p [max port number] Default 65535\n"
-		"  -t perform test scanner");
+		"  -t perform test scanner\n");
 	exit(0);
 }
 
